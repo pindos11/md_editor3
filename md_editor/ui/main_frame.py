@@ -7,6 +7,7 @@ import wx
 import wx.html2
 
 from ..ai_cleanup import (
+    AnthropicMessagesBackend,
     LlamaCppBackend,
     OpenAICompatBackend,
     find_ai_cleanup_blocks,
@@ -35,6 +36,13 @@ AI_OPENAI_TOP_P_META_KEY = "ai.openai.top_p"
 AI_OPENAI_FREQUENCY_PENALTY_META_KEY = "ai.openai.frequency_penalty"
 AI_OPENAI_PRESENCE_PENALTY_META_KEY = "ai.openai.presence_penalty"
 AI_OPENAI_TIMEOUT_META_KEY = "ai.openai.timeout_seconds"
+AI_ANTHROPIC_BASE_URL_META_KEY = "ai.anthropic.base_url"
+AI_ANTHROPIC_API_KEY_META_KEY = "ai.anthropic.api_key"
+AI_ANTHROPIC_MODEL_META_KEY = "ai.anthropic.model"
+AI_ANTHROPIC_MAX_TOKENS_META_KEY = "ai.anthropic.max_tokens"
+AI_ANTHROPIC_TEMPERATURE_META_KEY = "ai.anthropic.temperature"
+AI_ANTHROPIC_TOP_P_META_KEY = "ai.anthropic.top_p"
+AI_ANTHROPIC_TIMEOUT_META_KEY = "ai.anthropic.timeout_seconds"
 AI_LOCAL_MAX_TOKENS_META_KEY = "ai.local.max_tokens"
 AI_LOCAL_TEMPERATURE_META_KEY = "ai.local.temperature"
 AI_LOCAL_REPEAT_PENALTY_META_KEY = "ai.local.repeat_penalty"
@@ -56,9 +64,12 @@ AI_LOCAL_FLASH_ATTN_META_KEY = "ai.local.flash_attn"
 
 AI_BACKEND_LOCAL = "local"
 AI_BACKEND_OPENAI = "openai"
+AI_BACKEND_ANTHROPIC = "anthropic"
 AI_THINKING_DISABLED = "disabled"
 AI_THINKING_ALLOWED = "allowed"
-SPLITTER_SASH_SIZE = 10
+DIVIDER_WIDTH = 10
+MIN_TREE_PANEL_WIDTH = 220
+MIN_CONTENT_PANEL_WIDTH = 320
 
 THEMES = {
     "light": {
@@ -69,6 +80,7 @@ THEMES = {
         "editor_foreground": "#202124",
         "tree_background": "#ffffff",
         "tree_foreground": "#202124",
+        "border": "#c6ccd4",
     },
     "dark": {
         "background": "#1f2328",
@@ -78,6 +90,7 @@ THEMES = {
         "editor_foreground": "#e6edf3",
         "tree_background": "#252a31",
         "tree_foreground": "#e6edf3",
+        "border": "#56616f",
     },
 }
 
@@ -93,6 +106,9 @@ class MainFrame(wx.Frame):
         self.restoring_tree = False
         self.loading_node = False
         self.pending_view_scroll_y = 0
+        self.tree_panel_width = 320
+        self.divider_drag_start_x: int | None = None
+        self.divider_drag_start_width = self.tree_panel_width
         self.theme = self._load_theme()
         self.ai_backend_type = self._load_ai_backend_type()
         self.ai_backend: object | None = None
@@ -136,10 +152,11 @@ class MainFrame(wx.Frame):
         self.CreateStatusBar()
 
     def _build_ui(self) -> None:
-        self.splitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE)
-        self._set_splitter_sash_size(self.splitter, SPLITTER_SASH_SIZE)
+        self.main_panel = wx.Panel(self)
+        main_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        self.tree_panel = wx.Panel(self.splitter)
+        self.tree_panel = wx.Panel(self.main_panel)
+        self.tree_panel.SetMinSize((self.tree_panel_width, -1))
         tree_sizer = wx.BoxSizer(wx.VERTICAL)
         button_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.add_root_btn = wx.Button(self.tree_panel, label="Add Root")
@@ -153,7 +170,11 @@ class MainFrame(wx.Frame):
         tree_sizer.Add(self.tree, 1, wx.EXPAND | wx.ALL, 4)
         self.tree_panel.SetSizer(tree_sizer)
 
-        self.content_notebook = wx.Notebook(self.splitter)
+        self.divider_panel = wx.Panel(self.main_panel, size=(DIVIDER_WIDTH, -1))
+        self.divider_panel.SetMinSize((DIVIDER_WIDTH, -1))
+        self.divider_panel.SetCursor(wx.Cursor(wx.CURSOR_SIZEWE))
+
+        self.content_notebook = wx.Notebook(self.main_panel)
 
         self.edit_panel = wx.Panel(self.content_notebook)
         edit_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -184,8 +205,14 @@ class MainFrame(wx.Frame):
         self.content_notebook.AddPage(self.edit_panel, "Edit")
         self.content_notebook.AddPage(self.view_panel, "View")
 
-        self.splitter.SplitVertically(self.tree_panel, self.content_notebook, 320)
-        self.splitter.SetMinimumPaneSize(220)
+        main_sizer.Add(self.tree_panel, 0, wx.EXPAND)
+        main_sizer.Add(self.divider_panel, 0, wx.EXPAND)
+        main_sizer.Add(self.content_notebook, 1, wx.EXPAND)
+        self.main_panel.SetSizer(main_sizer)
+
+        frame_sizer = wx.BoxSizer(wx.VERTICAL)
+        frame_sizer.Add(self.main_panel, 1, wx.EXPAND)
+        self.SetSizer(frame_sizer)
 
     def _bind_events(self) -> None:
         self.Bind(wx.EVT_MENU, self.on_new_library, self.new_library_item)
@@ -218,6 +245,9 @@ class MainFrame(wx.Frame):
         self.editor.Bind(wx.EVT_LEFT_DOWN, self.on_editor_left_down)
         self.editor.Bind(wx.EVT_LEFT_UP, self.on_editor_left_up)
         self.title_ctrl.Bind(wx.EVT_TEXT, self.on_text_changed)
+        self.divider_panel.Bind(wx.EVT_LEFT_DOWN, self.on_divider_left_down)
+        self.divider_panel.Bind(wx.EVT_LEFT_UP, self.on_divider_left_up)
+        self.divider_panel.Bind(wx.EVT_MOTION, self.on_divider_motion)
         self.content_notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self.on_page_changed)
         self.preview.Bind(wx.html2.EVT_WEBVIEW_LOADED, self.on_preview_loaded)
 
@@ -422,6 +452,30 @@ class MainFrame(wx.Frame):
         else:
             self._indent_selection()
         self.dirty = self.selected_id is not None
+
+    def on_divider_left_down(self, event: wx.MouseEvent) -> None:
+        self.divider_drag_start_x = self.divider_panel.ClientToScreen(event.GetPosition()).x
+        self.divider_drag_start_width = self.tree_panel_width
+        self.divider_panel.CaptureMouse()
+
+    def on_divider_left_up(self, event: wx.MouseEvent) -> None:
+        self.divider_drag_start_x = None
+        if self.divider_panel.HasCapture():
+            self.divider_panel.ReleaseMouse()
+
+    def on_divider_motion(self, event: wx.MouseEvent) -> None:
+        if self.divider_drag_start_x is None or not event.Dragging() or not event.LeftIsDown():
+            event.Skip()
+            return
+        current_x = self.divider_panel.ClientToScreen(event.GetPosition()).x
+        self._set_tree_panel_width(self.divider_drag_start_width + current_x - self.divider_drag_start_x)
+
+    def _set_tree_panel_width(self, width: int) -> None:
+        available_width = self.main_panel.GetClientSize().width
+        max_width = max(MIN_TREE_PANEL_WIDTH, available_width - DIVIDER_WIDTH - MIN_CONTENT_PANEL_WIDTH)
+        self.tree_panel_width = min(max(MIN_TREE_PANEL_WIDTH, int(width)), max_width)
+        self.tree_panel.SetMinSize((self.tree_panel_width, -1))
+        self.main_panel.Layout()
 
     def on_editor_left_down(self, event: wx.MouseEvent) -> None:
         self.editor_selection_click = None
@@ -704,9 +758,17 @@ class MainFrame(wx.Frame):
     def apply_theme(self) -> None:
         colors = THEMES[self.theme]
         self.SetBackgroundColour(colors["background"])
-        for panel in (self.tree_panel, self.edit_panel, self.view_panel, self.content_notebook, self.splitter):
+        for panel in (
+            self.main_panel,
+            self.tree_panel,
+            self.divider_panel,
+            self.edit_panel,
+            self.view_panel,
+            self.content_notebook,
+        ):
             panel.SetBackgroundColour(colors["panel"])
             panel.SetForegroundColour(colors["foreground"])
+        self.divider_panel.SetBackgroundColour(colors["border"])
         self.tree.SetBackgroundColour(colors["tree_background"])
         self.tree.SetForegroundColour(colors["tree_foreground"])
         self.title_ctrl.SetBackgroundColour(colors["editor_background"])
@@ -742,7 +804,7 @@ class MainFrame(wx.Frame):
 
     def _load_ai_backend_type(self) -> str:
         backend = self.repo.get_meta(AI_BACKEND_META_KEY, AI_BACKEND_LOCAL)
-        return backend if backend in {AI_BACKEND_LOCAL, AI_BACKEND_OPENAI} else AI_BACKEND_LOCAL
+        return backend if backend in {AI_BACKEND_LOCAL, AI_BACKEND_OPENAI, AI_BACKEND_ANTHROPIC} else AI_BACKEND_LOCAL
 
     def _load_ai_settings(self) -> dict[str, str]:
         return {
@@ -776,6 +838,14 @@ class MainFrame(wx.Frame):
             "openai_frequency_penalty": self.repo.get_meta(AI_OPENAI_FREQUENCY_PENALTY_META_KEY, "0.0") or "0.0",
             "openai_presence_penalty": self.repo.get_meta(AI_OPENAI_PRESENCE_PENALTY_META_KEY, "0.0") or "0.0",
             "openai_timeout_seconds": self.repo.get_meta(AI_OPENAI_TIMEOUT_META_KEY, "120") or "120",
+            "anthropic_base_url": self.repo.get_meta(AI_ANTHROPIC_BASE_URL_META_KEY, "https://api.anthropic.com")
+            or "https://api.anthropic.com",
+            "anthropic_api_key": self.repo.get_meta(AI_ANTHROPIC_API_KEY_META_KEY, "") or "",
+            "anthropic_model": self.repo.get_meta(AI_ANTHROPIC_MODEL_META_KEY, "") or "",
+            "anthropic_max_tokens": self.repo.get_meta(AI_ANTHROPIC_MAX_TOKENS_META_KEY, "700") or "700",
+            "anthropic_temperature": self.repo.get_meta(AI_ANTHROPIC_TEMPERATURE_META_KEY, "0.2") or "0.2",
+            "anthropic_top_p": self.repo.get_meta(AI_ANTHROPIC_TOP_P_META_KEY, "1.0") or "1.0",
+            "anthropic_timeout_seconds": self.repo.get_meta(AI_ANTHROPIC_TIMEOUT_META_KEY, "120") or "120",
         }
 
     def _save_ai_settings(self, settings: dict[str, str]) -> None:
@@ -808,6 +878,13 @@ class MainFrame(wx.Frame):
         self.repo.set_meta(AI_OPENAI_FREQUENCY_PENALTY_META_KEY, settings["openai_frequency_penalty"])
         self.repo.set_meta(AI_OPENAI_PRESENCE_PENALTY_META_KEY, settings["openai_presence_penalty"])
         self.repo.set_meta(AI_OPENAI_TIMEOUT_META_KEY, settings["openai_timeout_seconds"])
+        self.repo.set_meta(AI_ANTHROPIC_BASE_URL_META_KEY, settings["anthropic_base_url"])
+        self.repo.set_meta(AI_ANTHROPIC_API_KEY_META_KEY, settings["anthropic_api_key"])
+        self.repo.set_meta(AI_ANTHROPIC_MODEL_META_KEY, settings["anthropic_model"])
+        self.repo.set_meta(AI_ANTHROPIC_MAX_TOKENS_META_KEY, settings["anthropic_max_tokens"])
+        self.repo.set_meta(AI_ANTHROPIC_TEMPERATURE_META_KEY, settings["anthropic_temperature"])
+        self.repo.set_meta(AI_ANTHROPIC_TOP_P_META_KEY, settings["anthropic_top_p"])
+        self.repo.set_meta(AI_ANTHROPIC_TIMEOUT_META_KEY, settings["anthropic_timeout_seconds"])
 
     def _prompt_ai_model_path(self) -> bool:
         with wx.FileDialog(
@@ -831,6 +908,10 @@ class MainFrame(wx.Frame):
             if isinstance(self.ai_backend, OpenAICompatBackend):
                 return self.ai_backend
             return self._get_openai_compat_backend()
+        if self.ai_backend_type == AI_BACKEND_ANTHROPIC:
+            if isinstance(self.ai_backend, AnthropicMessagesBackend):
+                return self.ai_backend
+            return self._get_anthropic_messages_backend()
         return self._get_local_llm_backend()
 
     def _get_local_llm_backend(self) -> LlamaCppBackend | None:
@@ -912,6 +993,24 @@ class MainFrame(wx.Frame):
             frequency_penalty=_float_from_meta(settings["openai_frequency_penalty"], 0.0),
             presence_penalty=_float_from_meta(settings["openai_presence_penalty"], 0.0),
             timeout_seconds=_int_from_meta(settings["openai_timeout_seconds"], 120),
+        )
+        return self.ai_backend
+
+    def _get_anthropic_messages_backend(self) -> AnthropicMessagesBackend | None:
+        settings = self._load_ai_settings()
+        api_key = settings["anthropic_api_key"].strip()
+        model = settings["anthropic_model"].strip()
+        if not api_key or not model:
+            self._show_error("Configure Anthropic API key and model in AI -> Settings first.")
+            return None
+        self.ai_backend = AnthropicMessagesBackend(
+            base_url=settings["anthropic_base_url"].strip() or "https://api.anthropic.com",
+            api_key=api_key,
+            model=model,
+            max_tokens=_int_from_meta(settings["anthropic_max_tokens"], 700),
+            temperature=_float_from_meta(settings["anthropic_temperature"], 0.2),
+            top_p=_float_from_meta(settings["anthropic_top_p"], 1.0),
+            timeout_seconds=_int_from_meta(settings["anthropic_timeout_seconds"], 120),
         )
         return self.ai_backend
 
@@ -1089,13 +1188,6 @@ class MainFrame(wx.Frame):
             pass
 
     @staticmethod
-    def _set_splitter_sash_size(splitter: wx.SplitterWindow, size: int) -> None:
-        try:
-            splitter.SashSize = size
-        except Exception:
-            pass
-
-    @staticmethod
     def _disable_smart_text_substitutions(text_ctrl: wx.TextCtrl) -> None:
         if wx.Platform != "__WXMAC__":
             return
@@ -1163,11 +1255,11 @@ class AISettingsDialog(wx.Dialog):
         self.backend_choice = wx.RadioBox(
             self,
             label="Backend",
-            choices=["Local llama.cpp", "OpenAI-compatible API"],
+            choices=["Local llama.cpp", "OpenAI-compatible API", "Anthropic Messages API"],
             majorDimension=1,
             style=wx.RA_SPECIFY_ROWS,
         )
-        self.backend_choice.SetSelection(1 if settings["backend"] == AI_BACKEND_OPENAI or not self.local_ai_available else 0)
+        self.backend_choice.SetSelection(self._backend_selection(settings["backend"]))
         if not self.local_ai_available:
             self.backend_choice.EnableItem(0, False)
         sizer.Add(self.backend_choice, 0, wx.EXPAND | wx.ALL, 8)
@@ -1340,8 +1432,48 @@ class AISettingsDialog(wx.Dialog):
         api_grid.AddSpacer(1)
         api_box.Add(api_grid, 0, wx.EXPAND | wx.ALL, 8)
 
+        anthropic_box = wx.StaticBoxSizer(wx.VERTICAL, scrolled, "Anthropic Messages API")
+        anthropic_grid = wx.FlexGridSizer(rows=0, cols=3, vgap=8, hgap=8)
+        anthropic_grid.AddGrowableCol(1, 1)
+        self.anthropic_base_url = wx.TextCtrl(scrolled, value=settings["anthropic_base_url"])
+        anthropic_grid.Add(wx.StaticText(scrolled, label="Base URL"), 0, wx.ALIGN_CENTER_VERTICAL)
+        anthropic_grid.Add(self.anthropic_base_url, 1, wx.EXPAND)
+        anthropic_grid.AddSpacer(1)
+
+        self.anthropic_api_key = wx.TextCtrl(scrolled, value=settings["anthropic_api_key"], style=wx.TE_PASSWORD)
+        anthropic_grid.Add(wx.StaticText(scrolled, label="API key"), 0, wx.ALIGN_CENTER_VERTICAL)
+        anthropic_grid.Add(self.anthropic_api_key, 1, wx.EXPAND)
+        anthropic_grid.AddSpacer(1)
+
+        self.anthropic_model = wx.TextCtrl(scrolled, value=settings["anthropic_model"])
+        anthropic_grid.Add(wx.StaticText(scrolled, label="Model"), 0, wx.ALIGN_CENTER_VERTICAL)
+        anthropic_grid.Add(self.anthropic_model, 1, wx.EXPAND)
+        anthropic_grid.AddSpacer(1)
+
+        self.anthropic_max_tokens = wx.TextCtrl(scrolled, value=settings["anthropic_max_tokens"])
+        anthropic_grid.Add(wx.StaticText(scrolled, label="Max tokens"), 0, wx.ALIGN_CENTER_VERTICAL)
+        anthropic_grid.Add(self.anthropic_max_tokens, 1, wx.EXPAND)
+        anthropic_grid.AddSpacer(1)
+
+        self.anthropic_temperature = wx.TextCtrl(scrolled, value=settings["anthropic_temperature"])
+        anthropic_grid.Add(wx.StaticText(scrolled, label="Temperature"), 0, wx.ALIGN_CENTER_VERTICAL)
+        anthropic_grid.Add(self.anthropic_temperature, 1, wx.EXPAND)
+        anthropic_grid.AddSpacer(1)
+
+        self.anthropic_top_p = wx.TextCtrl(scrolled, value=settings["anthropic_top_p"])
+        anthropic_grid.Add(wx.StaticText(scrolled, label="Top P"), 0, wx.ALIGN_CENTER_VERTICAL)
+        anthropic_grid.Add(self.anthropic_top_p, 1, wx.EXPAND)
+        anthropic_grid.AddSpacer(1)
+
+        self.anthropic_timeout_seconds = wx.TextCtrl(scrolled, value=settings["anthropic_timeout_seconds"])
+        anthropic_grid.Add(wx.StaticText(scrolled, label="Timeout seconds"), 0, wx.ALIGN_CENTER_VERTICAL)
+        anthropic_grid.Add(self.anthropic_timeout_seconds, 1, wx.EXPAND)
+        anthropic_grid.AddSpacer(1)
+        anthropic_box.Add(anthropic_grid, 0, wx.EXPAND | wx.ALL, 8)
+
         scrolled_sizer.Add(local_box, 0, wx.EXPAND | wx.ALL, 8)
         scrolled_sizer.Add(api_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        scrolled_sizer.Add(anthropic_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         scrolled.SetSizer(scrolled_sizer)
         sizer.Add(scrolled, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
@@ -1374,10 +1506,13 @@ class AISettingsDialog(wx.Dialog):
             self.local_model_path.SetValue(dialog.GetPath())
 
     def get_settings(self) -> dict[str, str]:
+        backend_by_selection = {
+            0: AI_BACKEND_LOCAL if self.local_ai_available else AI_BACKEND_OPENAI,
+            1: AI_BACKEND_OPENAI,
+            2: AI_BACKEND_ANTHROPIC,
+        }
         return {
-            "backend": AI_BACKEND_LOCAL
-            if self.local_ai_available and self.backend_choice.GetSelection() == 0
-            else AI_BACKEND_OPENAI,
+            "backend": backend_by_selection.get(self.backend_choice.GetSelection(), AI_BACKEND_OPENAI),
             "local_model_path": self.local_model_path.GetValue().strip(),
             "local_max_tokens": self.local_max_tokens.GetValue().strip() or "350",
             "local_temperature": self.local_temperature.GetValue().strip() or "0.1",
@@ -1408,7 +1543,21 @@ class AISettingsDialog(wx.Dialog):
             "openai_frequency_penalty": self.openai_frequency_penalty.GetValue().strip() or "0.0",
             "openai_presence_penalty": self.openai_presence_penalty.GetValue().strip() or "0.0",
             "openai_timeout_seconds": self.openai_timeout_seconds.GetValue().strip() or "120",
+            "anthropic_base_url": self.anthropic_base_url.GetValue().strip() or "https://api.anthropic.com",
+            "anthropic_api_key": self.anthropic_api_key.GetValue(),
+            "anthropic_model": self.anthropic_model.GetValue().strip(),
+            "anthropic_max_tokens": self.anthropic_max_tokens.GetValue().strip() or "700",
+            "anthropic_temperature": self.anthropic_temperature.GetValue().strip() or "0.2",
+            "anthropic_top_p": self.anthropic_top_p.GetValue().strip() or "1.0",
+            "anthropic_timeout_seconds": self.anthropic_timeout_seconds.GetValue().strip() or "120",
         }
+
+    def _backend_selection(self, backend: str) -> int:
+        if backend == AI_BACKEND_ANTHROPIC:
+            return 2
+        if backend == AI_BACKEND_OPENAI or not self.local_ai_available:
+            return 1
+        return 0
 
     def _set_sizer_enabled(self, sizer: wx.Sizer, enabled: bool) -> None:
         for item in sizer.GetChildren():

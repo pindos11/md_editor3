@@ -248,6 +248,68 @@ class OpenAICompatBackend:
             raise RuntimeError("OpenAI-compatible API response did not contain choices[0].message.content.") from exc
 
 
+class AnthropicMessagesBackend:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        max_tokens: int = 700,
+        temperature: float = 0.2,
+        top_p: float = 1.0,
+        timeout_seconds: int = 120,
+        base_url: str = "https://api.anthropic.com",
+        anthropic_version: str = "2023-06-01",
+        transport: Callable[[request.Request, int], bytes] | None = None,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.top_p = top_p
+        self.timeout_seconds = timeout_seconds
+        self.anthropic_version = anthropic_version
+        self.transport = transport or _default_transport
+
+    def complete(self, prompt: str) -> str:
+        if not self.api_key:
+            raise RuntimeError("Anthropic API key is not configured.")
+        if not self.model:
+            raise RuntimeError("Anthropic model name is not configured.")
+        payload = {
+            "model": self.model,
+            "system": "You rewrite marked Markdown blocks. Return only the replacement text.",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": self.max_tokens,
+            "stop_sequences": ["<<<END_REPLACEMENT>>>", "<!-- AI:", "Context after:", "Context before:"],
+        }
+        req = request.Request(
+            f"{self.base_url}/v1/messages",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": self.api_key,
+                "anthropic-version": self.anthropic_version,
+            },
+            method="POST",
+        )
+        try:
+            raw = self.transport(req, self.timeout_seconds)
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Anthropic Messages API returned HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Anthropic Messages API request failed: {exc.reason}") from exc
+        data = json.loads(raw.decode("utf-8"))
+        try:
+            parts = data["content"]
+            return "".join(str(part.get("text", "")) for part in parts if part.get("type") == "text")
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError("Anthropic Messages API response did not contain text content.") from exc
+
+
 def _default_transport(req: request.Request, timeout_seconds: int) -> bytes:
     with request.urlopen(req, timeout=timeout_seconds) as response:
         return response.read()

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from md_editor.ai_cleanup import (
+    AnthropicMessagesBackend,
     LlamaCppBackend,
     OpenAICompatBackend,
     apply_cleanup_replacements,
@@ -174,6 +175,34 @@ def test_openai_compat_backend_posts_chat_completion_request():
     assert captured["payload"]["frequency_penalty"] == 0.1
     assert captured["payload"]["presence_penalty"] == 0.2
     assert captured["payload"]["messages"][1]["content"] == "Prompt"
+
+
+def test_anthropic_messages_backend_posts_messages_request():
+    captured = {}
+
+    def fake_transport(req, timeout_seconds):
+        captured["url"] = req.full_url
+        captured["timeout"] = timeout_seconds
+        captured["headers"] = dict(req.header_items())
+        captured["payload"] = json.loads(req.data.decode("utf-8"))
+        return json.dumps({"content": [{"type": "text", "text": "Rewritten text"}]}).encode("utf-8")
+
+    backend = AnthropicMessagesBackend(
+        api_key="test-key",
+        model="claude-test",
+        top_p=0.7,
+        timeout_seconds=90,
+        transport=fake_transport,
+    )
+
+    assert backend.complete("Prompt") == "Rewritten text"
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
+    assert captured["timeout"] == 90
+    assert captured["headers"]["X-api-key"] == "test-key"
+    assert captured["headers"]["Anthropic-version"] == "2023-06-01"
+    assert captured["payload"]["model"] == "claude-test"
+    assert captured["payload"]["top_p"] == 0.7
+    assert captured["payload"]["messages"][0]["content"] == "Prompt"
 
 
 def test_llama_backend_thinking_toggle_controls_no_think_prompt_path():

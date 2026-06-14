@@ -19,7 +19,7 @@ Folder import creates a node for the selected folder, empty nodes for subfolders
 
 ## AI Cleanup
 
-AI cleanup can use either a local `llama-cpp-python` GGUF model or an OpenAI-compatible HTTP API.
+AI cleanup can use a local `llama-cpp-python` GGUF model, an OpenAI-compatible HTTP API, or the Anthropic Messages API.
 
 For local GGUF models, install the optional LLM extra:
 
@@ -39,6 +39,7 @@ Use `AI -> Settings...` to choose:
 
 - `Local llama.cpp`: select a `.gguf` model file.
 - `OpenAI-compatible API`: enter base URL, API key, model name, max tokens, temperature, and timeout.
+- `Anthropic Messages API`: enter API key, model name, max tokens, temperature, top-p, and timeout.
 
 For local models, the settings dialog also exposes max tokens, temperature, top-k, top-p, min-p, frequency/presence penalties, repeat penalty, seed, context size, thread count, GPU layers, thinking mode, batch, micro batch, K/Q/V offload, and flash attention. Defaults are conservative for cleanup tasks: fixed seed, thinking disabled, low temperature, shorter output, smaller CUDA batches, and a repetition penalty.
 
@@ -50,6 +51,12 @@ The OpenAI-compatible backend calls:
 
 ```text
 {base_url}/chat/completions
+```
+
+The Anthropic backend calls:
+
+```text
+{base_url}/v1/messages
 ```
 
 The app shows a read-only diff before applying changes, and `Undo AI` restores the previous document text for the last accepted AI cleanup.
