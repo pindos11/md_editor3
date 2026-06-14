@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import wx
@@ -839,8 +840,11 @@ class MainFrame(wx.Frame):
             "openai_presence_penalty": self.repo.get_meta(AI_OPENAI_PRESENCE_PENALTY_META_KEY, "0.0") or "0.0",
             "openai_timeout_seconds": self.repo.get_meta(AI_OPENAI_TIMEOUT_META_KEY, "120") or "120",
             "anthropic_base_url": self.repo.get_meta(AI_ANTHROPIC_BASE_URL_META_KEY, "https://api.anthropic.com")
+            or os.environ.get("ANTHROPIC_BASE_URL","")
             or "https://api.anthropic.com",
-            "anthropic_api_key": self.repo.get_meta(AI_ANTHROPIC_API_KEY_META_KEY, "") or "",
+            "anthropic_api_key": self.repo.get_meta(AI_ANTHROPIC_API_KEY_META_KEY, "") 
+            or os.environ.get("ANTHROPIC_AUTH_TOKEN","")
+            or "",
             "anthropic_model": self.repo.get_meta(AI_ANTHROPIC_MODEL_META_KEY, "") or "",
             "anthropic_max_tokens": self.repo.get_meta(AI_ANTHROPIC_MAX_TOKENS_META_KEY, "700") or "700",
             "anthropic_temperature": self.repo.get_meta(AI_ANTHROPIC_TEMPERATURE_META_KEY, "0.2") or "0.2",
