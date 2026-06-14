@@ -58,6 +58,7 @@ AI_BACKEND_LOCAL = "local"
 AI_BACKEND_OPENAI = "openai"
 AI_THINKING_DISABLED = "disabled"
 AI_THINKING_ALLOWED = "allowed"
+SPLITTER_SASH_SIZE = 10
 
 THEMES = {
     "light": {
@@ -136,6 +137,7 @@ class MainFrame(wx.Frame):
 
     def _build_ui(self) -> None:
         self.splitter = wx.SplitterWindow(self, style=wx.SP_LIVE_UPDATE)
+        self._set_splitter_sash_size(self.splitter, SPLITTER_SASH_SIZE)
 
         self.tree_panel = wx.Panel(self.splitter)
         tree_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -157,6 +159,7 @@ class MainFrame(wx.Frame):
         edit_sizer = wx.BoxSizer(wx.VERTICAL)
         edit_toolbar = wx.BoxSizer(wx.HORIZONTAL)
         self.title_ctrl = wx.TextCtrl(self.edit_panel)
+        self._disable_smart_text_substitutions(self.title_ctrl)
         self.save_btn = wx.Button(self.edit_panel, label="Save")
         self.ai_cleanup_btn = wx.Button(self.edit_panel, label="AI Cleanup")
         self.undo_ai_btn = wx.Button(self.edit_panel, label="Undo AI")
@@ -167,6 +170,7 @@ class MainFrame(wx.Frame):
         edit_toolbar.Add(self.ai_cleanup_btn, 0, wx.LEFT, 6)
         edit_toolbar.Add(self.undo_ai_btn, 0, wx.LEFT, 6)
         self.editor = wx.TextCtrl(self.edit_panel, style=wx.TE_MULTILINE | wx.TE_RICH2 | wx.TE_PROCESS_TAB)
+        self._disable_smart_text_substitutions(self.editor)
         edit_sizer.Add(edit_toolbar, 0, wx.EXPAND | wx.ALL, 6)
         edit_sizer.Add(self.editor, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         self.edit_panel.SetSizer(edit_sizer)
@@ -1083,6 +1087,36 @@ class MainFrame(wx.Frame):
             window.SetScrollPos(wx.VERTICAL, max(0, int(position)), True)
         except Exception:
             pass
+
+    @staticmethod
+    def _set_splitter_sash_size(splitter: wx.SplitterWindow, size: int) -> None:
+        try:
+            splitter.SashSize = size
+        except Exception:
+            pass
+
+    @staticmethod
+    def _disable_smart_text_substitutions(text_ctrl: wx.TextCtrl) -> None:
+        if wx.Platform != "__WXMAC__":
+            return
+        disable_all = getattr(text_ctrl, "OSXDisableAllSmartSubstitutions", None)
+        if callable(disable_all):
+            try:
+                disable_all()
+            except (NotImplementedError, RuntimeError):
+                pass
+            return
+        for method_name in (
+            "OSXEnableAutomaticDashSubstitution",
+            "OSXEnableAutomaticQuoteSubstitution",
+            "OSXEnableNewLineReplacement",
+        ):
+            method = getattr(text_ctrl, method_name, None)
+            if callable(method):
+                try:
+                    method(False)
+                except (NotImplementedError, RuntimeError):
+                    pass
 
 
 def _int_from_meta(value: object, default: int) -> int:
