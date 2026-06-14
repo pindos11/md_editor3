@@ -12,6 +12,7 @@ LIST_MARKER = re.compile(r"^\s{0,3}(?:[-+*]|\d+[.)])\s+")
 ORDERED_PAREN_MARKER = re.compile(r"^(\s{0,3})(\d+)\)(\s+)")
 FENCE_MARKER = re.compile(r"^\s{0,3}(```|~~~)")
 FENCE_ONLY_MARKER = re.compile(r"^\s{1,3}(```|~~~)\s*$")
+FRONTMATTER_DELIMITER = re.compile(r"^---\s*$")
 
 
 def render_markdown(markdown_text: str, theme: str = "light") -> str:
@@ -92,6 +93,7 @@ def _theme_colors(theme: str) -> dict[str, str]:
 
 
 def normalize_markdown_for_render(markdown_text: str) -> str:
+    markdown_text = strip_frontmatter(markdown_text)
     normalized: list[str] = []
     in_fence = False
 
@@ -112,6 +114,23 @@ def normalize_markdown_for_render(markdown_text: str) -> str:
         normalized.append(content + line_ending)
 
     return "".join(normalized)
+
+
+def strip_frontmatter(markdown_text: str) -> str:
+    lines = markdown_text.splitlines(keepends=True)
+    if not lines:
+        return markdown_text
+
+    first_content = lines[0].rstrip("\r\n")
+    if not FRONTMATTER_DELIMITER.match(first_content):
+        return markdown_text
+
+    for index, line in enumerate(lines[1:], start=1):
+        content = line.rstrip("\r\n")
+        if FRONTMATTER_DELIMITER.match(content):
+            return "".join(lines[index + 1 :])
+
+    return markdown_text
 
 
 def normalize_ordered_list_markers(markdown_text: str) -> str:

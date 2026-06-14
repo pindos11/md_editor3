@@ -3,7 +3,12 @@ from __future__ import annotations
 from md_editor.db import Repository
 from md_editor.exporter import export_tree
 from md_editor.importer import import_folder
-from md_editor.markdown_render import normalize_markdown_for_render, normalize_ordered_list_markers, render_markdown
+from md_editor.markdown_render import (
+    normalize_markdown_for_render,
+    normalize_ordered_list_markers,
+    render_markdown,
+    strip_frontmatter,
+)
 
 
 def test_folder_import_preserves_folder_tree_as_empty_nodes(tmp_path):
@@ -55,6 +60,20 @@ def test_markdown_rendering_outputs_expected_html():
     assert "Heading" in html
     assert "<li>one</li>" in html
     assert "<code>code</code>" in html
+
+
+def test_markdown_rendering_hides_frontmatter():
+    html = render_markdown("---\ntitle: Hidden\n---\n# Visible\n")
+
+    assert "title: Hidden" not in html
+    assert "<h1" in html
+    assert "Visible" in html
+
+
+def test_frontmatter_stripping_only_applies_at_document_start():
+    markdown = "# Heading\n\n---\n\nBody"
+
+    assert strip_frontmatter(markdown) == markdown
 
 
 def test_markdown_rendering_accepts_parenthesized_ordered_lists():
