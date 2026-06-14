@@ -1,0 +1,41 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Local app data
+data/*.sqlite3
+data/*.sqlite3-*
+
+# Local model files
+models/*.gguf
+models/*.bin
+models/*.safetensors
+
+# Pytest cache-provider fallback directories created when .pytest_cache is unavailable
+pytest-cache-files-*/
+pytest-cache-files-*
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/

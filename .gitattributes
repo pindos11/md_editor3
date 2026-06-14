@@ -1,0 +1,11 @@
+* text=auto
+
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+
+*.sqlite3 binary
+*.sqlite3-* binary
+*.gguf binary
+*.bin binary
+*.safetensors binary

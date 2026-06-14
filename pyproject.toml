@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portable-md-editor"
+version = "0.1.0"
+description = "Portable local SQLite-backed Markdown editor with a wxPython GUI."
+requires-python = ">=3.11"
+dependencies = [
+    "Markdown>=3.5",
+    "wxPython>=4.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pyinstaller>=6",
+]
+llm = [
+    "llama-cpp-python>=0.2.90",
+]
+
+[project.scripts]
+md-editor = "md_editor.app:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
