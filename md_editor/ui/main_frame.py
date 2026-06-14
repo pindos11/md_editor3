@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import wx
@@ -71,6 +72,14 @@ AI_THINKING_ALLOWED = "allowed"
 DIVIDER_WIDTH = 10
 MIN_TREE_PANEL_WIDTH = 220
 MIN_CONTENT_PANEL_WIDTH = 320
+MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+.*$", re.MULTILINE)
+MARKDOWN_LIST_MARKER_RE = re.compile(r"^(?P<indent>\s{0,3})(?P<marker>[-+*]|\d+[.)])(?P<space>\s+)", re.MULTILINE)
+MARKDOWN_BLOCKQUOTE_RE = re.compile(r"^\s{0,3}>+", re.MULTILINE)
+MARKDOWN_BOLD_RE = re.compile(r"(?<!\\)(\*\*|__)(?=\S)(.+?)(?<=\S)\1")
+MARKDOWN_ITALIC_RE = re.compile(r"(?<!\\)(?<!\*)\*(?!\*)(?=\S)(.+?)(?<=\S)(?<!\*)\*(?!\*)")
+MARKDOWN_INLINE_CODE_RE = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+MARKDOWN_LINK_RE = re.compile(r"\[[^\]\n]+\]\([^) \n]+(?:\s+\"[^\"]*\")?\)")
+MARKDOWN_FRONTMATTER_RE = re.compile(r"\A---[ \t]*\r?\n.*?\r?\n---[ \t]*(?:\r?\n|$)", re.DOTALL)
 
 THEMES = {
     "light": {
@@ -82,6 +91,12 @@ THEMES = {
         "tree_background": "#ffffff",
         "tree_foreground": "#202124",
         "border": "#c6ccd4",
+        "syntax_heading": "#1558d6",
+        "syntax_marker": "#6a737d",
+        "syntax_emphasis": "#202124",
+        "syntax_code": "#9a3412",
+        "syntax_link": "#1558d6",
+        "syntax_frontmatter": "#7a8490",
     },
     "dark": {
         "background": "#1f2328",
@@ -92,6 +107,12 @@ THEMES = {
         "tree_background": "#252a31",
         "tree_foreground": "#e6edf3",
         "border": "#56616f",
+        "syntax_heading": "#7bb7ff",
+        "syntax_marker": "#aab6c4",
+        "syntax_emphasis": "#e6edf3",
+        "syntax_code": "#ffb86b",
+        "syntax_link": "#7bb7ff",
+        "syntax_frontmatter": "#8b98a8",
     },
 }
 
@@ -110,6 +131,7 @@ class MainFrame(wx.Frame):
         self.tree_panel_width = 320
         self.divider_drag_start_x: int | None = None
         self.divider_drag_start_width = self.tree_panel_width
+        self.highlighting_editor = False
         self.theme = self._load_theme()
         self.ai_backend_type = self._load_ai_backend_type()
         self.ai_backend: object | None = None
@@ -313,6 +335,7 @@ class MainFrame(wx.Frame):
             self.title_ctrl.ChangeValue(node.title)
             self.editor.ChangeValue(node.markdown_content)
             self._restore_editor_position(node.id)
+            self._schedule_editor_highlighting(delay_ms=1)
             self.pending_view_scroll_y = self._load_view_scroll_y(node.id)
             self.preview.SetPage(render_markdown(node.markdown_content, self.theme), "")
             self.dirty = False
@@ -558,6 +581,8 @@ class MainFrame(wx.Frame):
             if self.selected_id is not None:
                 self.pending_view_scroll_y = self._load_view_scroll_y(self.selected_id)
                 self.preview.SetPage(render_markdown(self.repo.get_node(self.selected_id).markdown_content, self.theme), "")
+        elif self.content_notebook.GetPageText(event.GetSelection()) == "Edit":
+            self._schedule_editor_highlighting(delay_ms=1)
         event.Skip()
 
     def on_preview_loaded(self, event: wx.html2.WebViewEvent) -> None:
@@ -776,6 +801,7 @@ class MainFrame(wx.Frame):
         self.title_ctrl.SetForegroundColour(colors["editor_foreground"])
         self.editor.SetBackgroundColour(colors["editor_background"])
         self.editor.SetForegroundColour(colors["editor_foreground"])
+        self._schedule_editor_highlighting(delay_ms=1)
         self._apply_theme_to_children(self.tree_panel, colors)
         self._apply_theme_to_children(self.edit_panel, colors)
         self.Refresh()
@@ -1190,6 +1216,90 @@ class MainFrame(wx.Frame):
             window.SetScrollPos(wx.VERTICAL, max(0, int(position)), True)
         except Exception:
             pass
+
+    def _schedule_editor_highlighting(self, delay_ms: int = 1) -> None:
+        wx.CallAfter(self._highlight_editor_markdown)
+
+    def _highlight_editor_markdown(self) -> None:
+        text = self.editor.GetValue()
+        colors = THEMES[self.theme]
+        base_font = self.editor.GetFont()
+        default_attr = wx.TextAttr(colors["editor_foreground"], colors["editor_background"])
+        default_attr.SetFont(base_font)
+
+        heading_font = wx.Font(base_font)
+        heading_font.SetWeight(wx.FONTWEIGHT_BOLD)
+        bold_font = wx.Font(base_font)
+        bold_font.SetWeight(wx.FONTWEIGHT_BOLD)
+        italic_font = wx.Font(base_font)
+        italic_font.SetStyle(wx.FONTSTYLE_ITALIC)
+        code_font = wx.Font(
+            base_font.GetPointSize(),
+            wx.FONTFAMILY_TELETYPE,
+            wx.FONTSTYLE_NORMAL,
+            wx.FONTWEIGHT_NORMAL,
+        )
+        link_font = wx.Font(base_font)
+        link_font.SetUnderlined(True)
+
+        styles = [
+            (MARKDOWN_FRONTMATTER_RE, self._editor_text_attr(colors["syntax_frontmatter"], colors, italic_font)),
+            (MARKDOWN_HEADING_RE, self._editor_text_attr(colors["syntax_heading"], colors, heading_font)),
+            (MARKDOWN_LIST_MARKER_RE, self._editor_text_attr(colors["syntax_marker"], colors, bold_font)),
+            (MARKDOWN_BLOCKQUOTE_RE, self._editor_text_attr(colors["syntax_marker"], colors, bold_font)),
+            (MARKDOWN_LINK_RE, self._editor_text_attr(colors["syntax_link"], colors, link_font)),
+            (MARKDOWN_INLINE_CODE_RE, self._editor_text_attr(colors["syntax_code"], colors, code_font)),
+            (MARKDOWN_BOLD_RE, self._editor_text_attr(colors["syntax_emphasis"], colors, bold_font)),
+            (MARKDOWN_ITALIC_RE, self._editor_text_attr(colors["syntax_emphasis"], colors, italic_font)),
+        ]
+
+        insertion_point = self.editor.GetInsertionPoint()
+        selection = self.editor.GetSelection()
+        scroll_x = self._get_control_scroll_pos(self.editor, wx.HORIZONTAL)
+        scroll_y = self._get_control_scroll_pos(self.editor, wx.VERTICAL)
+        self.highlighting_editor = True
+        self.editor.Freeze()
+        try:
+            self.editor.SetStyle(0, len(text), default_attr)
+            for pattern, attr in styles:
+                for match in pattern.finditer(text):
+                    start, end = match.span("marker") if "marker" in pattern.groupindex else match.span()
+                    if end > start:
+                        self.editor.SetStyle(start, end, attr)
+            if self.editor.GetSelection() != selection:
+                self.editor.SetSelection(*selection)
+            if selection[0] == selection[1] and self.editor.GetInsertionPoint() != insertion_point:
+                self.editor.SetInsertionPoint(min(insertion_point, len(text)))
+            self._set_control_scroll_pos(self.editor, wx.HORIZONTAL, scroll_x)
+            self._set_control_scroll_pos(self.editor, wx.VERTICAL, scroll_y)
+        finally:
+            self.editor.Thaw()
+            self.highlighting_editor = False
+        wx.CallAfter(self._restore_editor_scroll_position, scroll_x, scroll_y)
+
+    def _restore_editor_scroll_position(self, scroll_x: int, scroll_y: int) -> None:
+        self._set_control_scroll_pos(self.editor, wx.HORIZONTAL, scroll_x)
+        self._set_control_scroll_pos(self.editor, wx.VERTICAL, scroll_y)
+
+    @staticmethod
+    def _get_control_scroll_pos(window: wx.Window, orientation: int) -> int:
+        try:
+            return int(window.GetScrollPos(orientation))
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _set_control_scroll_pos(window: wx.Window, orientation: int, position: int) -> None:
+        try:
+            window.SetScrollPos(orientation, max(0, int(position)), True)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _editor_text_attr(foreground: str, colors: dict[str, str], font: wx.Font) -> wx.TextAttr:
+        attr = wx.TextAttr(foreground, colors["editor_background"])
+        attr.SetFont(font)
+        return attr
 
     @staticmethod
     def _disable_smart_text_substitutions(text_ctrl: wx.TextCtrl) -> None:
